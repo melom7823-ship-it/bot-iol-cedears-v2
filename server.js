@@ -124,7 +124,7 @@ function getIolCotizacion(token, ticker) {
   return new Promise((resolve) => {
     const options = {
       hostname: 'api.invertironline.com',
-      path: `/api/v2/cotizaciones/titulos/bCBA/${ticker}`,
+      path: `/api/v2/bCBA/Titulos/${ticker}/Cotizacion`,
       method: 'GET',
       headers: { 'Authorization': `Bearer ${token}` }
     };
