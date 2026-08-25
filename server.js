@@ -153,8 +153,8 @@ async function getMepRate() {
 }
 
 // ============================================================
-// IOL — HORARIO BYMA (Lunes-Viernes 10:30-17:00 Buenos Aires)
-// ============================================================
+// IOL — HORARIO BYMA: Lunes a Viernes 11:00 a 17:00 hs (Buenos Aires = UTC-3)
+// Nota: Pusimos 10:30 porque el pre-market arranca ahí, pero IOL suele dar cotizaciones reales a las 11:00
 function isMarketOpen() {
   const now = new Date();
   const day = now.getUTCDay();
@@ -259,7 +259,7 @@ function startIolBotV2(username, password, capitalArs) {
   };
 
   const log = (msg) => {
-    const ts = new Date().toLocaleTimeString('es-AR');
+    const ts = new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour12: false });
     const entry = `[${ts}] ${msg}`;
     console.log(`[IOL v2] ${entry}`);
     iolBot.logs.unshift(entry);
@@ -454,7 +454,7 @@ const server = http.createServer(async (req, res) => {
       losses: iolBot?.losses || 0,
       gananciasArs: iolBot?.totalGananciasArs || 0,
       uptime: process.uptime(),
-      ts: new Date().toISOString()
+      ts: new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
     }));
     return;
   }
