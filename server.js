@@ -251,6 +251,9 @@ function startIolBotV2(username, password, capitalArs) {
     qty: 0,
     buyPriceArs: null,
     buyTimestamp: null,
+    tpPct: 3.5, // Por defecto +3.5% (se ajusta dinámicamente con ATR)
+    slPct: 1.5, // Por defecto -1.5% (se ajusta dinámicamente con ATR)
+    atrPct: 1.5,
     totalGananciasArs: 0,
     wins: 0,
     losses: 0,
@@ -305,15 +308,15 @@ function startIolBotV2(username, password, capitalArs) {
       const varPct = ((precioActual - iolBot.buyPriceArs) / iolBot.buyPriceArs) * 100;
       const tiempoEnPos = Date.now() - iolBot.buyTimestamp;
       const timeout = tiempoEnPos >= CFG.MAX_TIEMPO_POS;
-      const takeProfit = varPct >= CFG.TAKE_PROFIT;
-      const stopLoss = varPct <= -CFG.STOP_LOSS;
+      const takeProfit = varPct >= iolBot.tpPct;
+      const stopLoss = varPct <= -iolBot.slPct;
 
       const horasPos = (tiempoEnPos / 3600000).toFixed(1);
-      log(`📊 ${iolBot.ticker}: Comprado $${iolBot.buyPriceArs.toFixed(2)} → Actual $${precioActual.toFixed(2)} | Var: ${varPct >= 0 ? '+' : ''}${varPct.toFixed(2)}% | TP: +${CFG.TAKE_PROFIT}% | SL: -${CFG.STOP_LOSS}% | En posición: ${horasPos}h`);
+      log(`📊 ${iolBot.ticker}: Comprado $${iolBot.buyPriceArs.toFixed(2)} → Actual $${precioActual.toFixed(2)} | Var: ${varPct >= 0 ? '+' : ''}${varPct.toFixed(2)}% | TP Adaptativo: +${iolBot.tpPct.toFixed(2)}% | SL Adaptativo: -${iolBot.slPct.toFixed(2)}% | En posición: ${horasPos}h`);
 
       let razon = null;
-      if (takeProfit) razon = '✅ TAKE PROFIT +3.5%';
-      else if (stopLoss) razon = '🔴 STOP LOSS -1.5%';
+      if (takeProfit) razon = `✅ TAKE PROFIT +${iolBot.tpPct.toFixed(2)}%`;
+      else if (stopLoss) razon = `🔴 STOP LOSS -${iolBot.slPct.toFixed(2)}%`;
       else if (timeout) razon = '⏱️ TIMEOUT 3 HORAS — Venta preventiva';
 
       if (razon) {
@@ -366,12 +369,21 @@ function startIolBotV2(username, password, capitalArs) {
       const promedioUsd = cedearHistory[c.ticker].reduce((a, b) => a + b.valorUsd, 0) / pts;
       const descuentoPct = ((promedioUsd - valorUsd) / promedioUsd) * 100;
 
+      const max = parseFloat(cotiz.maximo || cotiz.ultimoPrecio);
+      const min = parseFloat(cotiz.minimo || cotiz.ultimoPrecio);
+      const prevClose = parseFloat(cotiz.cierreAnterior || cotiz.ultimoPrecio);
+      const tr = Math.max(max - min, Math.abs(max - prevClose), Math.abs(min - prevClose));
+      const atrPct = (tr / precioArs) * 100 || 1.5;
+
+      const dynamicTpPct = Math.min(Math.max(atrPct * 1.8, 2.0), 5.0);
+      const dynamicSlPct = Math.min(Math.max(atrPct * 0.9, 1.0), 2.5);
+
       const icon = descuentoPct >= CFG.SEÑAL_COMPRA ? '🟢' : (descuentoPct >= 1.0 ? '🟡' : '⚪');
-      log(`${icon} ${c.ticker}: $${precioArs.toFixed(2)} ARS | USD: $${valorUsd.toFixed(4)} | Promedio: $${promedioUsd.toFixed(4)} | Descuento: ${descuentoPct >= 0 ? '+' : ''}${descuentoPct.toFixed(2)}%`);
+      log(`${icon} ${c.ticker}: $${precioArs.toFixed(2)} ARS | USD: $${valorUsd.toFixed(4)} | Prom: $${promedioUsd.toFixed(4)} | ATR: ${atrPct.toFixed(2)}% | Descuento: ${descuentoPct >= 0 ? '+' : ''}${descuentoPct.toFixed(2)}%`);
 
       if (descuentoPct >= CFG.SEÑAL_COMPRA && descuentoPct > mayorDescuento) {
         mayorDescuento = descuentoPct;
-        mejorOportunidad = { ...c, precioArs, valorUsd, promedioUsd, descuentoPct };
+        mejorOportunidad = { ...c, precioArs, valorUsd, promedioUsd, descuentoPct, atrPct, dynamicTpPct, dynamicSlPct };
       }
     }
 
@@ -386,7 +398,7 @@ function startIolBotV2(username, password, capitalArs) {
       return;
     }
 
-    log(`🟢 OPORTUNIDAD: ${mejorOportunidad.emoji} ${mejorOportunidad.ticker} con ${mejorOportunidad.descuentoPct.toFixed(2)}% de descuento real.`);
+    log(`🟢 OPORTUNIDAD: ${mejorOportunidad.emoji} ${mejorOportunidad.ticker} con ${mejorOportunidad.descuentoPct.toFixed(2)}% de descuento real | ATR: ${mejorOportunidad.atrPct.toFixed(2)}%`);
     log(`🛒 Comprando ${cantidad} CEDEARs de ${mejorOportunidad.ticker} a $${mejorOportunidad.precioArs.toFixed(2)} ARS | Total: $${(cantidad * mejorOportunidad.precioArs).toLocaleString('es-AR')} ARS`);
 
     const resultado = await sendIolOrder(token, mejorOportunidad.ticker, cantidad, mejorOportunidad.precioArs, 'comprar');
@@ -397,8 +409,11 @@ function startIolBotV2(username, password, capitalArs) {
       iolBot.qty = cantidad;
       iolBot.buyPriceArs = mejorOportunidad.precioArs;
       iolBot.buyTimestamp = Date.now();
+      iolBot.tpPct = mejorOportunidad.dynamicTpPct;
+      iolBot.slPct = mejorOportunidad.dynamicSlPct;
+      iolBot.atrPct = mejorOportunidad.atrPct;
       log(`✅ COMPRA CONFIRMADA | Orden #${resultado.orderId} | ${cantidad}× ${mejorOportunidad.ticker}`);
-      log(`🎯 Objetivos: TP $${(mejorOportunidad.precioArs * (1 + CFG.TAKE_PROFIT / 100)).toFixed(2)} (+3.5%) | SL $${(mejorOportunidad.precioArs * (1 - CFG.STOP_LOSS / 100)).toFixed(2)} (-1.5%) | Timeout: 3hs`);
+      log(`🎯 Objetivos Dinámicos ATR: TP $${(mejorOportunidad.precioArs * (1 + mejorOportunidad.dynamicTpPct / 100)).toFixed(2)} (+${mejorOportunidad.dynamicTpPct.toFixed(2)}%) | SL $${(mejorOportunidad.precioArs * (1 - mejorOportunidad.dynamicSlPct / 100)).toFixed(2)} (-${mejorOportunidad.dynamicSlPct.toFixed(2)}%) | Timeout: 3hs`);
     } else {
       log(`❌ COMPRA FALLIDA: ${resultado.error}`);
     }
