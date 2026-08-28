@@ -223,7 +223,7 @@ function sendIolOrder(token, ticker, cantidad, precio, tipo) {
       simbolo: ticker.toUpperCase(),
       cantidad: Number(cantidad),
       precio: precioLimite,
-      plazo: 't0',
+      plazo: 't2', // Plazo t2 (48hs) es el plazo estándar con más liquidez en BYMA para CEDEARs
       validez: new Date(Date.now() + 86400000).toISOString()
     });
 
@@ -475,6 +475,8 @@ function startIolBotV2(username, password, capitalArs) {
           };
           log(`✅ SLOT #${freeSlotIndex+1} OCUPADO | Orden #${resultado.orderId} | ${cantidad}× ${q.ticker} | TP: +${dynamicTpPct.toFixed(2)}% | SL: -${dynamicSlPct.toFixed(2)}%`);
           return;
+        } else {
+          log(`❌ RECHAZO DE ORDEN IOL: ${resultado.error}`);
         }
       }
     }
