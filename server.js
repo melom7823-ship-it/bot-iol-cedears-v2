@@ -42,19 +42,63 @@ const CFG = {
 };
 
 // ============================================================
-// CEDEARs MONITOREADOS (8 activos — el doble que antes)
-// QQQ SIEMPRE EXCLUIDO — protección de inversión personal
+// CEDEARs MONITOREADOS (25 ACTIVOS ULTRALÍQUIDOS EN BYMA)
+// QQQ EXCLUIDO — protección de inversión personal
 // ============================================================
 const CEDEARS = [
-  { ticker: 'AAPL',  nombre: 'Apple',     emoji: '🍎' },
-  { ticker: 'MSFT',  nombre: 'Microsoft', emoji: '🪟' },
-  { ticker: 'AMZN',  nombre: 'Amazon',    emoji: '📦' },
-  { ticker: 'NVDA',  nombre: 'NVIDIA',    emoji: '🎮' },
-  { ticker: 'GOOGL', nombre: 'Google',    emoji: '🔍' },
-  { ticker: 'META',  nombre: 'Meta',      emoji: '👤' },
-  { ticker: 'TSLA',  nombre: 'Tesla',     emoji: '⚡' },
-  { ticker: 'JPM',   nombre: 'JPMorgan',  emoji: '🏦' },
+  { ticker: 'AAPL',  nombre: 'Apple',          emoji: '🍎', sector: 'Tech' },
+  { ticker: 'MSFT',  nombre: 'Microsoft',      emoji: '🪟', sector: 'Tech' },
+  { ticker: 'GOOGL', nombre: 'Google',         emoji: '🔍', sector: 'Tech' },
+  { ticker: 'META',  nombre: 'Meta',           emoji: '👤', sector: 'Tech' },
+  { ticker: 'NVDA',  nombre: 'NVIDIA',         emoji: '🎮', sector: 'Semi' },
+  { ticker: 'AMD',   nombre: 'AMD',            emoji: '💻', sector: 'Semi' },
+  { ticker: 'AVGO',  nombre: 'Broadcom',       emoji: '🔌', sector: 'Semi' },
+  { ticker: 'INTC',  nombre: 'Intel',          emoji: '⚙️', sector: 'Semi' },
+  { ticker: 'AMZN',  nombre: 'Amazon',         emoji: '📦', sector: 'ECom' },
+  { ticker: 'MELI',  nombre: 'MercadoLibre',   emoji: '🟡', sector: 'ECom' },
+  { ticker: 'BABA',  nombre: 'Alibaba',        emoji: '🇨🇳', sector: 'ECom' },
+  { ticker: 'TSLA',  nombre: 'Tesla',          emoji: '⚡', sector: 'ECom' },
+  { ticker: 'V',     nombre: 'Visa',           emoji: '💳', sector: 'Fin' },
+  { ticker: 'MA',    nombre: 'Mastercard',     emoji: '🔴', sector: 'Fin' },
+  { ticker: 'JPM',   nombre: 'JPMorgan',       emoji: '🏦', sector: 'Fin' },
+  { ticker: 'BAC',   nombre: 'Bank of America',emoji: '🏛️', sector: 'Fin' },
+  { ticker: 'KO',    nombre: 'Coca-Cola',      emoji: '🥤', sector: 'Staples' },
+  { ticker: 'PEP',   nombre: 'PepsiCo',        emoji: '🍾', sector: 'Staples' },
+  { ticker: 'WMT',   nombre: 'Walmart',        emoji: '🛒', sector: 'Staples' },
+  { ticker: 'PG',    nombre: 'Procter & Gamble',emoji: '🧼', sector: 'Staples' },
+  { ticker: 'XOM',   nombre: 'ExxonMobil',     emoji: '⛽', sector: 'Energy' },
+  { ticker: 'CVX',   nombre: 'Chevron',        emoji: '🛢️', sector: 'Energy' },
+  { ticker: 'PFE',   nombre: 'Pfizer',         emoji: '💊', sector: 'Health' },
+  { ticker: 'JNJ',   nombre: 'Johnson & Johnson',emoji: '🩺', sector: 'Health' },
+  { ticker: 'DIS',   nombre: 'Disney',         emoji: '🏰', sector: 'Media' }
 ];
+
+// ============================================================
+// PARES DE PAIRS TRADING (COINTEGRACIÓN SECTORIAL)
+// ============================================================
+const PAIRS = [
+  { key: 'NVDA_AMD',  a: 'NVDA',  b: 'AMD',  name: 'Semiconductores 🎮' },
+  { key: 'MSFT_AAPL', a: 'MSFT',  b: 'AAPL', name: 'Big Tech 🪟' },
+  { key: 'GOOGL_META',a: 'GOOGL', b: 'META', name: 'IA & Publicidad 🔍' },
+  { key: 'V_MA',      a: 'V',     b: 'MA',   name: 'Medios de Pago 💳' },
+  { key: 'AMZN_MELI', a: 'AMZN',  b: 'MELI', name: 'E-Commerce 📦' },
+  { key: 'KO_PEP',    a: 'KO',    b: 'PEP',  name: 'Consumo Masivo 🥤' },
+  { key: 'XOM_CVX',   a: 'XOM',   b: 'CVX',  name: 'Energía & Petróleo ⛽' }
+];
+
+const pairRatioHistory = {};
+
+function calculatePairZScore(pairKey) {
+  const history = pairRatioHistory[pairKey] || [];
+  if (history.length < 5) return null;
+  const mean = history.reduce((acc, v) => acc + v, 0) / history.length;
+  const variance = history.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / history.length;
+  const stdDev = Math.sqrt(variance);
+  if (stdDev === 0) return { zScore: 0, mean, current: history[history.length - 1] };
+  const currentRatio = history[history.length - 1];
+  const zScore = (currentRatio - mean) / stdDev;
+  return { zScore, mean, stdDev, current: currentRatio, pts: history.length };
+}
 
 // ============================================================
 // HELPERS — HTTP/HTTPS
@@ -269,11 +313,10 @@ function startIolBotV2(username, password, capitalArs) {
     if (iolBot.logs.length > 30) iolBot.logs.pop();
   };
 
-  log(`🚀 BOT IOL CEDEARS v2 INICIADO`);
-  log(`💰 Capital: $${iolBot.capitalArs.toLocaleString('es-AR')} ARS`);
-  log(`📈 Estrategia: TP +3.5% | SL -1.5% | Señal mínima: -2.0% | Ciclo: 5 min`);
-  log(`🔍 Monitoreando: ${CEDEARS.map(c => c.ticker).join(', ')} (QQQ: 🔒 BLOQUEADO)`);
-  log(`📊 Proyección estimada: $${Math.round(gananciaEstimadaDia).toLocaleString('es-AR')} ARS/día | $${Math.round(gananciaEstimadaMes).toLocaleString('es-AR')} ARS/mes`);
+  log(`🚀 BOT IOL CEDEARS v2 FASE 2 INICIADO`);
+  log(`💰 Capital: $${iolBot.capitalArs.toLocaleString('es-AR')} ARS | Estrategia: PAIRS TRADING (25 CEDEARs / 7 Pares)`);
+  log(`🔍 Monitoreando: 25 CEDEARs (7 Pares Cointegrados: NVDA/AMD, MSFT/AAPL, GOOGL/META, V/MA, AMZN/MELI, KO/PEP, XOM/CVX)`);
+  log(`📊 Proyección estimada: $${Math.round(gananciaEstimadaDia * 2).toLocaleString('es-AR')} ARS/día | $${Math.round(gananciaEstimadaMes * 2).toLocaleString('es-AR')} ARS/mes`);
 
   const ciclo = async () => {
     if (!iolBot) return;
@@ -343,80 +386,147 @@ function startIolBotV2(username, password, capitalArs) {
       return;
     }
 
-    // ── FASE DE BÚSQUEDA Y COMPRA ───────────────────────────
-    let mejorOportunidad = null;
-    let mayorDescuento = 0;
+    // ── FASE DE ESCANEO DE LOS 25 CEDEARS Y MUESTREO ─────────
+    const currentUsdValues = {};
+    const currentQuotes = {};
 
     for (const c of CEDEARS) {
       const cotiz = await getIolCotizacion(token, c.ticker);
-      if (!cotiz || !cotiz.ultimoPrecio) {
-        log(`⚠️ ${c.ticker}: Sin cotización.`);
-        continue;
+      if (cotiz && cotiz.ultimoPrecio) {
+        const precioArs = parseFloat(cotiz.ultimoPrecio);
+        const valorUsd = precioArs / mep;
+        currentUsdValues[c.ticker] = valorUsd;
+        currentQuotes[c.ticker] = { precioArs, valorUsd, cotiz };
+
+        if (!cedearHistory[c.ticker]) cedearHistory[c.ticker] = [];
+        cedearHistory[c.ticker].push({ valorUsd, ts: Date.now() });
+        if (cedearHistory[c.ticker].length > CFG.HISTORIAL_MAX) cedearHistory[c.ticker].shift();
       }
-      const precioArs = parseFloat(cotiz.ultimoPrecio);
-      const valorUsd = precioArs / mep;
+    }
 
-      if (!cedearHistory[c.ticker]) cedearHistory[c.ticker] = [];
-      cedearHistory[c.ticker].push({ valorUsd, ts: Date.now() });
-      if (cedearHistory[c.ticker].length > CFG.HISTORIAL_MAX) cedearHistory[c.ticker].shift();
+    // ── PROCESAMIENTO DE HISTORIAL Y PAIRS TRADING (RATIO Z-SCORE) ──
+    let mejorOportunidadPair = null;
+    let maxZDeviation = 0;
 
-      const pts = cedearHistory[c.ticker].length;
-      if (pts < CFG.HISTORIAL_MIN) {
-        log(`${c.emoji} ${c.ticker}: $${precioArs.toFixed(2)} ARS | Acumulando datos (${pts}/${CFG.HISTORIAL_MIN})...`);
-        continue;
+    for (const pair of PAIRS) {
+      const valA = currentUsdValues[pair.a];
+      const valB = currentUsdValues[pair.b];
+      if (valA && valB) {
+        const ratio = valA / valB;
+        if (!pairRatioHistory[pair.key]) pairRatioHistory[pair.key] = [];
+        pairRatioHistory[pair.key].push(ratio);
+        if (pairRatioHistory[pair.key].length > CFG.HISTORIAL_MAX) pairRatioHistory[pair.key].shift();
+
+        const zData = calculatePairZScore(pair.key);
+        if (zData && zData.pts >= 5) {
+          const zVal = zData.zScore;
+          const absZ = Math.abs(zVal);
+          const statusIcon = absZ >= 1.8 ? '🔴 SEÑAL' : (absZ >= 1.2 ? '🟡 ALERTA' : '⚪ OK');
+          log(`📊 [PAR ${pair.name}] Ratio: ${ratio.toFixed(4)} | Z-Score: ${zVal >= 0 ? '+' : ''}${zVal.toFixed(2)} ${statusIcon}`);
+
+          if (absZ >= 1.8 && absZ > maxZDeviation) {
+            maxZDeviation = absZ;
+            const targetTicker = zVal < 0 ? pair.a : pair.b; // Z negativo -> A subvaluado. Z positivo -> B subvaluado.
+            const targetQuote = currentQuotes[targetTicker];
+            if (targetQuote) {
+              mejorOportunidadPair = {
+                ticker: targetTicker,
+                precioArs: targetQuote.precioArs,
+                valorUsd: targetQuote.valorUsd,
+                pairName: pair.name,
+                zScore: zVal,
+                cotiz: targetQuote.cotiz
+              };
+            }
+          }
+        }
       }
+    }
 
-      const promedioUsd = cedearHistory[c.ticker].reduce((a, b) => a + b.valorUsd, 0) / pts;
-      const descuentoPct = ((promedioUsd - valorUsd) / promedioUsd) * 100;
-
+    // ── SI HAY SEÑAL DE PAIRS TRADING, COMPRAR EL ACTIVO SUBVALUADO ──
+    if (mejorOportunidadPair) {
+      const q = mejorOportunidadPair;
+      const cotiz = q.cotiz;
       const max = parseFloat(cotiz.maximo || cotiz.ultimoPrecio);
       const min = parseFloat(cotiz.minimo || cotiz.ultimoPrecio);
       const prevClose = parseFloat(cotiz.cierreAnterior || cotiz.ultimoPrecio);
       const tr = Math.max(max - min, Math.abs(max - prevClose), Math.abs(min - prevClose));
-      const atrPct = (tr / precioArs) * 100 || 1.5;
-
+      const atrPct = (tr / q.precioArs) * 100 || 1.5;
       const dynamicTpPct = Math.min(Math.max(atrPct * 1.8, 2.0), 5.0);
       const dynamicSlPct = Math.min(Math.max(atrPct * 0.9, 1.0), 2.5);
 
-      const icon = descuentoPct >= CFG.SEÑAL_COMPRA ? '🟢' : (descuentoPct >= 1.0 ? '🟡' : '⚪');
-      log(`${icon} ${c.ticker}: $${precioArs.toFixed(2)} ARS | USD: $${valorUsd.toFixed(4)} | Prom: $${promedioUsd.toFixed(4)} | ATR: ${atrPct.toFixed(2)}% | Descuento: ${descuentoPct >= 0 ? '+' : ''}${descuentoPct.toFixed(2)}%`);
+      const cantidad = Math.floor(iolBot.capitalArs / q.precioArs);
+      if (cantidad >= 1) {
+        log(`⚡ SEÑAL DE PAIRS TRADING ACTIVADA: ${q.ticker} en Par [${q.pairName}] con Z-Score de ${q.zScore.toFixed(2)}`);
+        log(`🛒 Comprando ${cantidad} CEDEARs de ${q.ticker} a $${q.precioArs.toFixed(2)} ARS | Total: $${(cantidad * q.precioArs).toLocaleString('es-AR')} ARS`);
 
-      if (descuentoPct >= CFG.SEÑAL_COMPRA && descuentoPct > mayorDescuento) {
-        mayorDescuento = descuentoPct;
-        mejorOportunidad = { ...c, precioArs, valorUsd, promedioUsd, descuentoPct, atrPct, dynamicTpPct, dynamicSlPct };
+        const resultado = await sendIolOrder(token, q.ticker, cantidad, q.precioArs, 'comprar');
+        if (resultado.success) {
+          iolBot.estado = 'INVERTIDO';
+          iolBot.ticker = q.ticker;
+          iolBot.qty = cantidad;
+          iolBot.buyPriceArs = q.precioArs;
+          iolBot.buyTimestamp = Date.now();
+          iolBot.tpPct = dynamicTpPct;
+          iolBot.slPct = dynamicSlPct;
+          iolBot.atrPct = atrPct;
+          log(`✅ COMPRA PAIRS TRADING CONFIRMADA | Orden #${resultado.orderId} | ${cantidad}× ${q.ticker}`);
+          log(`🎯 Objetivos ATR: TP $${(q.precioArs * (1 + dynamicTpPct / 100)).toFixed(2)} (+${dynamicTpPct.toFixed(2)}%) | SL $${(q.precioArs * (1 - dynamicSlPct / 100)).toFixed(2)} (-${dynamicSlPct.toFixed(2)}%)`);
+          return;
+        }
       }
     }
 
-    if (!mejorOportunidad) {
-      log(`⏳ Sin oportunidad (mínimo ${CFG.SEÑAL_COMPRA}% descuento). Esperando próximo ciclo en 5 min.`);
-      return;
+    // ── FALLBACK: DIP BUYING SOBRE CUALQUIERA DE LOS 25 CEDEARS ──────
+    let mejorDip = null;
+    let mayorDescuento = 0;
+
+    for (const c of CEDEARS) {
+      const q = currentQuotes[c.ticker];
+      if (q) {
+        const pts = (cedearHistory[c.ticker] || []).length;
+        if (pts >= CFG.HISTORIAL_MIN) {
+          const promedioUsd = cedearHistory[c.ticker].reduce((a, b) => a + b.valorUsd, 0) / pts;
+          const descuentoPct = ((promedioUsd - q.valorUsd) / promedioUsd) * 100;
+          if (descuentoPct >= CFG.SEÑAL_COMPRA && descuentoPct > mayorDescuento) {
+            mayorDescuento = descuentoPct;
+            mejorDip = { ...c, precioArs: q.precioArs, valorUsd: q.valorUsd, promedioUsd, descuentoPct, cotiz: q.cotiz };
+          }
+        }
+      }
     }
 
-    const cantidad = Math.floor(iolBot.capitalArs / mejorOportunidad.precioArs);
-    if (cantidad < 1) {
-      log(`⚠️ Capital insuficiente para ${mejorOportunidad.ticker} ($${mejorOportunidad.precioArs.toFixed(2)} ARS/unidad).`);
-      return;
+    if (mejorDip) {
+      const cotiz = mejorDip.cotiz;
+      const max = parseFloat(cotiz.maximo || cotiz.ultimoPrecio);
+      const min = parseFloat(cotiz.minimo || cotiz.ultimoPrecio);
+      const prevClose = parseFloat(cotiz.cierreAnterior || cotiz.ultimoPrecio);
+      const tr = Math.max(max - min, Math.abs(max - prevClose), Math.abs(min - prevClose));
+      const atrPct = (tr / mejorDip.precioArs) * 100 || 1.5;
+      const dynamicTpPct = Math.min(Math.max(atrPct * 1.8, 2.0), 5.0);
+      const dynamicSlPct = Math.min(Math.max(atrPct * 0.9, 1.0), 2.5);
+
+      const cantidad = Math.floor(iolBot.capitalArs / mejorDip.precioArs);
+      if (cantidad >= 1) {
+        log(`🟢 OPORTUNIDAD DIP: ${mejorDip.emoji} ${mejorDip.ticker} con ${mejorDip.descuentoPct.toFixed(2)}% de descuento.`);
+        log(`🛒 Comprando ${cantidad} CEDEARs de ${mejorDip.ticker} a $${mejorDip.precioArs.toFixed(2)} ARS`);
+        const resultado = await sendIolOrder(token, mejorDip.ticker, cantidad, mejorDip.precioArs, 'comprar');
+        if (resultado.success) {
+          iolBot.estado = 'INVERTIDO';
+          iolBot.ticker = mejorDip.ticker;
+          iolBot.qty = cantidad;
+          iolBot.buyPriceArs = mejorDip.precioArs;
+          iolBot.buyTimestamp = Date.now();
+          iolBot.tpPct = dynamicTpPct;
+          iolBot.slPct = dynamicSlPct;
+          iolBot.atrPct = atrPct;
+          log(`✅ COMPRA DIP CONFIRMADA | Orden #${resultado.orderId} | ${cantidad}× ${mejorDip.ticker}`);
+          return;
+        }
+      }
     }
 
-    log(`🟢 OPORTUNIDAD: ${mejorOportunidad.emoji} ${mejorOportunidad.ticker} con ${mejorOportunidad.descuentoPct.toFixed(2)}% de descuento real | ATR: ${mejorOportunidad.atrPct.toFixed(2)}%`);
-    log(`🛒 Comprando ${cantidad} CEDEARs de ${mejorOportunidad.ticker} a $${mejorOportunidad.precioArs.toFixed(2)} ARS | Total: $${(cantidad * mejorOportunidad.precioArs).toLocaleString('es-AR')} ARS`);
-
-    const resultado = await sendIolOrder(token, mejorOportunidad.ticker, cantidad, mejorOportunidad.precioArs, 'comprar');
-
-    if (resultado.success) {
-      iolBot.estado = 'INVERTIDO';
-      iolBot.ticker = mejorOportunidad.ticker;
-      iolBot.qty = cantidad;
-      iolBot.buyPriceArs = mejorOportunidad.precioArs;
-      iolBot.buyTimestamp = Date.now();
-      iolBot.tpPct = mejorOportunidad.dynamicTpPct;
-      iolBot.slPct = mejorOportunidad.dynamicSlPct;
-      iolBot.atrPct = mejorOportunidad.atrPct;
-      log(`✅ COMPRA CONFIRMADA | Orden #${resultado.orderId} | ${cantidad}× ${mejorOportunidad.ticker}`);
-      log(`🎯 Objetivos Dinámicos ATR: TP $${(mejorOportunidad.precioArs * (1 + mejorOportunidad.dynamicTpPct / 100)).toFixed(2)} (+${mejorOportunidad.dynamicTpPct.toFixed(2)}%) | SL $${(mejorOportunidad.precioArs * (1 - mejorOportunidad.dynamicSlPct / 100)).toFixed(2)} (-${mejorOportunidad.dynamicSlPct.toFixed(2)}%) | Timeout: 3hs`);
-    } else {
-      log(`❌ COMPRA FALLIDA: ${resultado.error}`);
-    }
+    log(`⏳ Sin oportunidad de Pairs Trading ni Dip (en 25 activos / 7 pares). Esperando próximo ciclo en 5 min.`);
   };
 
   // Primer ciclo inmediato
