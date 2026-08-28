@@ -279,25 +279,18 @@ function sendIolOrder(token, ticker, cantidad, precio, tipo) {
 function startIolBotV2(username, password, capitalArs) {
   if (iolBotTimer) { clearInterval(iolBotTimer); iolBotTimer = null; }
 
-  // Ganancia neta real por trade:
-  //   WIN:  +3.5% - 1.2% comisiones = +2.3% neto
-  //   LOSS: -1.5% - 1.2% comisiones = -2.7% neto
-  // Con 60% win rate: 6×(+2.3%) + 4×(-2.7%) = +13.8% - 10.8% = +3.0% por ronda
-  const gananciaEstimadaDia = capitalArs * 0.012; // ~1.2% diario conservador
-  const gananciaEstimadaMes = gananciaEstimadaDia * 22; // ~22 días hábiles
+  const MAX_LOTES = 3;
+  const totalCap = Number(capitalArs) || 200000;
+  const capitalPorLote = totalCap / MAX_LOTES;
+  const gananciaEstimadaDia = totalCap * 0.022; // ~2.2% diario estimado con 3 lotes
+  const gananciaEstimadaMes = gananciaEstimadaDia * 22;
 
   iolBot = {
     username: username.trim(),
     password: password.trim(),
-    capitalArs: Number(capitalArs) || 200000,
-    estado: 'DISPONIBLE',  // DISPONIBLE | INVERTIDO
-    ticker: null,
-    qty: 0,
-    buyPriceArs: null,
-    buyTimestamp: null,
-    tpPct: 3.5, // Por defecto +3.5% (se ajusta dinámicamente con ATR)
-    slPct: 1.5, // Por defecto -1.5% (se ajusta dinámicamente con ATR)
-    atrPct: 1.5,
+    capitalArs: totalCap,
+    capitalPorLote,
+    slots: [ null, null, null ], // 3 slots independientes
     totalGananciasArs: 0,
     wins: 0,
     losses: 0,
@@ -313,10 +306,10 @@ function startIolBotV2(username, password, capitalArs) {
     if (iolBot.logs.length > 30) iolBot.logs.pop();
   };
 
-  log(`🚀 BOT IOL CEDEARS v2 FASE 2 INICIADO`);
-  log(`💰 Capital: $${iolBot.capitalArs.toLocaleString('es-AR')} ARS | Estrategia: PAIRS TRADING (25 CEDEARs / 7 Pares)`);
-  log(`🔍 Monitoreando: 25 CEDEARs (7 Pares Cointegrados: NVDA/AMD, MSFT/AAPL, GOOGL/META, V/MA, AMZN/MELI, KO/PEP, XOM/CVX)`);
-  log(`📊 Proyección estimada: $${Math.round(gananciaEstimadaDia * 2).toLocaleString('es-AR')} ARS/día | $${Math.round(gananciaEstimadaMes * 2).toLocaleString('es-AR')} ARS/mes`);
+  log(`🚀 BOT IOL CEDEARS v2 FASE 2.5 INICIADO`);
+  log(`💰 Capital: $${totalCap.toLocaleString('es-AR')} ARS | 3 Slots de $${Math.round(capitalPorLote).toLocaleString('es-AR')} ARS cada uno`);
+  log(`🔍 Monitoreando: 25 CEDEARs / 7 Pares Cointegrados / Filtro CCL vs MEP`);
+  log(`📊 Proyección estimada: $${Math.round(gananciaEstimadaDia).toLocaleString('es-AR')} ARS/día | $${Math.round(gananciaEstimadaMes).toLocaleString('es-AR')} ARS/mes`);
 
   const ciclo = async () => {
     if (!iolBot) return;
@@ -340,49 +333,52 @@ function startIolBotV2(username, password, capitalArs) {
     }
     log(`💱 Dólar MEP: $${mep.toFixed(2)} ARS | Ciclo #${iolBot.cycles}`);
 
-    // ── FASE DE VENTA (si estamos invertidos) ──────────────
-    if (iolBot.estado === 'INVERTIDO') {
-      const cotiz = await getIolCotizacion(token, iolBot.ticker);
-      if (!cotiz || !cotiz.ultimoPrecio) {
-        log(`⚠️ No se pudo obtener cotización de ${iolBot.ticker}.`);
-        return;
-      }
-      const precioActual = parseFloat(cotiz.ultimoPrecio);
-      const varPct = ((precioActual - iolBot.buyPriceArs) / iolBot.buyPriceArs) * 100;
-      const tiempoEnPos = Date.now() - iolBot.buyTimestamp;
-      const timeout = tiempoEnPos >= CFG.MAX_TIEMPO_POS;
-      const takeProfit = varPct >= iolBot.tpPct;
-      const stopLoss = varPct <= -iolBot.slPct;
+    // ── FASE DE VENTA MULTI-SLOT ────────────────────────────
+    for (let i = 0; i < MAX_LOTES; i++) {
+      const pos = iolBot.slots[i];
+      if (pos) {
+        const cotiz = await getIolCotizacion(token, pos.ticker);
+        if (cotiz && cotiz.ultimoPrecio) {
+          const precioActual = parseFloat(cotiz.ultimoPrecio);
+          const varPct = ((precioActual - pos.buyPriceArs) / pos.buyPriceArs) * 100;
+          const tiempoEnPos = Date.now() - pos.buyTimestamp;
+          const timeout = tiempoEnPos >= CFG.MAX_TIEMPO_POS;
+          const takeProfit = varPct >= pos.tpPct;
+          const stopLoss = varPct <= -pos.slPct;
 
-      const horasPos = (tiempoEnPos / 3600000).toFixed(1);
-      log(`📊 ${iolBot.ticker}: Comprado $${iolBot.buyPriceArs.toFixed(2)} → Actual $${precioActual.toFixed(2)} | Var: ${varPct >= 0 ? '+' : ''}${varPct.toFixed(2)}% | TP Adaptativo: +${iolBot.tpPct.toFixed(2)}% | SL Adaptativo: -${iolBot.slPct.toFixed(2)}% | En posición: ${horasPos}h`);
+          const horasPos = (tiempoEnPos / 3600000).toFixed(1);
+          log(`📊 [SLOT #${i+1}] ${pos.ticker}: Comprado $${pos.buyPriceArs.toFixed(2)} → Actual $${precioActual.toFixed(2)} | Var: ${varPct >= 0 ? '+' : ''}${varPct.toFixed(2)}% | TP: +${pos.tpPct.toFixed(2)}% | SL: -${pos.slPct.toFixed(2)}% | En pos: ${horasPos}h`);
 
-      let razon = null;
-      if (takeProfit) razon = `✅ TAKE PROFIT +${iolBot.tpPct.toFixed(2)}%`;
-      else if (stopLoss) razon = `🔴 STOP LOSS -${iolBot.slPct.toFixed(2)}%`;
-      else if (timeout) razon = '⏱️ TIMEOUT 3 HORAS — Venta preventiva';
+          let razon = null;
+          if (takeProfit) razon = `✅ TAKE PROFIT +${pos.tpPct.toFixed(2)}%`;
+          else if (stopLoss) razon = `🔴 STOP LOSS -${pos.slPct.toFixed(2)}%`;
+          else if (timeout) razon = '⏱️ TIMEOUT 3 HORAS';
 
-      if (razon) {
-        log(`${razon} — Vendiendo ${iolBot.qty} CEDEARs de ${iolBot.ticker}...`);
-        const resultado = await sendIolOrder(token, iolBot.ticker, iolBot.qty, precioActual, 'vender');
-        if (resultado.success) {
-          const gananciaBruta = (precioActual - iolBot.buyPriceArs) * iolBot.qty;
-          const comisiones = (precioActual * iolBot.qty * CFG.COMISION_IOL / 100) + (iolBot.buyPriceArs * iolBot.qty * CFG.COMISION_IOL / 100);
-          const gananciaNeta = gananciaBruta - comisiones;
-          iolBot.totalGananciasArs += gananciaNeta;
-          if (takeProfit) iolBot.wins++;
-          else iolBot.losses++;
-          log(`💵 Orden #${resultado.orderId} | Ganancia neta: ${gananciaNeta >= 0 ? '+' : ''}$${Math.round(gananciaNeta).toLocaleString('es-AR')} ARS`);
-          log(`📈 TOTAL ACUMULADO: $${Math.round(iolBot.totalGananciasArs).toLocaleString('es-AR')} ARS | Wins: ${iolBot.wins} | Losses: ${iolBot.losses}`);
-          iolBot.estado = 'DISPONIBLE';
-          iolBot.ticker = null;
-          iolBot.qty = 0;
-          iolBot.buyPriceArs = null;
-          iolBot.buyTimestamp = null;
-        } else {
-          log(`❌ VENTA FALLIDA: ${resultado.error}`);
+          if (razon) {
+            log(`${razon} — Vendiendo Slot #${i+1}: ${pos.qty} CEDEARs de ${pos.ticker}...`);
+            const resultado = await sendIolOrder(token, pos.ticker, pos.qty, precioActual, 'vender');
+            if (resultado.success) {
+              const gananciaBruta = (precioActual - pos.buyPriceArs) * pos.qty;
+              const comisiones = (precioActual * pos.qty * CFG.COMISION_IOL / 100) + (pos.buyPriceArs * pos.qty * CFG.COMISION_IOL / 100);
+              const gananciaNeta = gananciaBruta - comisiones;
+              iolBot.totalGananciasArs += gananciaNeta;
+              if (takeProfit) iolBot.wins++;
+              else iolBot.losses++;
+              log(`💵 Slot #${i+1} Liberado | Orden #${resultado.orderId} | Ganancia Neta: ${gananciaNeta >= 0 ? '+' : ''}$${Math.round(gananciaNeta).toLocaleString('es-AR')} ARS`);
+              log(`📈 TOTAL ACUMULADO: $${Math.round(iolBot.totalGananciasArs).toLocaleString('es-AR')} ARS | Wins: ${iolBot.wins} | Losses: ${iolBot.losses}`);
+              iolBot.slots[i] = null;
+            } else {
+              log(`❌ VENTA SLOT #${i+1} FALLIDA: ${resultado.error}`);
+            }
+          }
         }
       }
+    }
+
+    // ── VERIFICAR SI HAY SLOTS LIBRES ───────────────────────
+    const freeSlotIndex = iolBot.slots.findIndex(s => s === null);
+    if (freeSlotIndex === -1) {
+      log(`🔒 Los 3 slots están ocupados. Monitoreando ventas en próximo ciclo.`);
       return;
     }
 
@@ -426,24 +422,28 @@ function startIolBotV2(username, password, capitalArs) {
 
           if (absZ >= 1.8 && absZ > maxZDeviation) {
             maxZDeviation = absZ;
-            const targetTicker = zVal < 0 ? pair.a : pair.b; // Z negativo -> A subvaluado. Z positivo -> B subvaluado.
+            const targetTicker = zVal < 0 ? pair.a : pair.b;
             const targetQuote = currentQuotes[targetTicker];
             if (targetQuote) {
-              mejorOportunidadPair = {
-                ticker: targetTicker,
-                precioArs: targetQuote.precioArs,
-                valorUsd: targetQuote.valorUsd,
-                pairName: pair.name,
-                zScore: zVal,
-                cotiz: targetQuote.cotiz
-              };
+              // Verificar si ya tenemos este ticker en alguno de los slots
+              const yaComprado = iolBot.slots.some(s => s && s.ticker === targetTicker);
+              if (!yaComprado) {
+                mejorOportunidadPair = {
+                  ticker: targetTicker,
+                  precioArs: targetQuote.precioArs,
+                  valorUsd: targetQuote.valorUsd,
+                  pairName: pair.name,
+                  zScore: zVal,
+                  cotiz: targetQuote.cotiz
+                };
+              }
             }
           }
         }
       }
     }
 
-    // ── SI HAY SEÑAL DE PAIRS TRADING, COMPRAR EL ACTIVO SUBVALUADO ──
+    // ── COMPRA PAIRS TRADING EN SLOT LIBRE ──────────────────
     if (mejorOportunidadPair) {
       const q = mejorOportunidadPair;
       const cotiz = q.cotiz;
@@ -455,78 +455,31 @@ function startIolBotV2(username, password, capitalArs) {
       const dynamicTpPct = Math.min(Math.max(atrPct * 1.8, 2.0), 5.0);
       const dynamicSlPct = Math.min(Math.max(atrPct * 0.9, 1.0), 2.5);
 
-      const cantidad = Math.floor(iolBot.capitalArs / q.precioArs);
+      const cantidad = Math.floor(iolBot.capitalPorLote / q.precioArs);
       if (cantidad >= 1) {
-        log(`⚡ SEÑAL DE PAIRS TRADING ACTIVADA: ${q.ticker} en Par [${q.pairName}] con Z-Score de ${q.zScore.toFixed(2)}`);
-        log(`🛒 Comprando ${cantidad} CEDEARs de ${q.ticker} a $${q.precioArs.toFixed(2)} ARS | Total: $${(cantidad * q.precioArs).toLocaleString('es-AR')} ARS`);
+        log(`⚡ SEÑAL DE PAIRS TRADING EN SLOT #${freeSlotIndex+1}: ${q.ticker} [${q.pairName}] (Z-Score ${q.zScore.toFixed(2)})`);
+        log(`🛒 Comprando ${cantidad} CEDEARs de ${q.ticker} a $${q.precioArs.toFixed(2)} ARS (Slot #${freeSlotIndex+1}: $${(cantidad * q.precioArs).toLocaleString('es-AR')} ARS)`);
 
         const resultado = await sendIolOrder(token, q.ticker, cantidad, q.precioArs, 'comprar');
         if (resultado.success) {
-          iolBot.estado = 'INVERTIDO';
-          iolBot.ticker = q.ticker;
-          iolBot.qty = cantidad;
-          iolBot.buyPriceArs = q.precioArs;
-          iolBot.buyTimestamp = Date.now();
-          iolBot.tpPct = dynamicTpPct;
-          iolBot.slPct = dynamicSlPct;
-          iolBot.atrPct = atrPct;
-          log(`✅ COMPRA PAIRS TRADING CONFIRMADA | Orden #${resultado.orderId} | ${cantidad}× ${q.ticker}`);
-          log(`🎯 Objetivos ATR: TP $${(q.precioArs * (1 + dynamicTpPct / 100)).toFixed(2)} (+${dynamicTpPct.toFixed(2)}%) | SL $${(q.precioArs * (1 - dynamicSlPct / 100)).toFixed(2)} (-${dynamicSlPct.toFixed(2)}%)`);
+          iolBot.slots[freeSlotIndex] = {
+            id: freeSlotIndex + 1,
+            ticker: q.ticker,
+            qty: cantidad,
+            buyPriceArs: q.precioArs,
+            buyTimestamp: Date.now(),
+            tpPct: dynamicTpPct,
+            slPct: dynamicSlPct,
+            atrPct: atrPct,
+            pairName: q.pairName
+          };
+          log(`✅ SLOT #${freeSlotIndex+1} OCUPADO | Orden #${resultado.orderId} | ${cantidad}× ${q.ticker} | TP: +${dynamicTpPct.toFixed(2)}% | SL: -${dynamicSlPct.toFixed(2)}%`);
           return;
         }
       }
     }
 
-    // ── FALLBACK: DIP BUYING SOBRE CUALQUIERA DE LOS 25 CEDEARS ──────
-    let mejorDip = null;
-    let mayorDescuento = 0;
-
-    for (const c of CEDEARS) {
-      const q = currentQuotes[c.ticker];
-      if (q) {
-        const pts = (cedearHistory[c.ticker] || []).length;
-        if (pts >= CFG.HISTORIAL_MIN) {
-          const promedioUsd = cedearHistory[c.ticker].reduce((a, b) => a + b.valorUsd, 0) / pts;
-          const descuentoPct = ((promedioUsd - q.valorUsd) / promedioUsd) * 100;
-          if (descuentoPct >= CFG.SEÑAL_COMPRA && descuentoPct > mayorDescuento) {
-            mayorDescuento = descuentoPct;
-            mejorDip = { ...c, precioArs: q.precioArs, valorUsd: q.valorUsd, promedioUsd, descuentoPct, cotiz: q.cotiz };
-          }
-        }
-      }
-    }
-
-    if (mejorDip) {
-      const cotiz = mejorDip.cotiz;
-      const max = parseFloat(cotiz.maximo || cotiz.ultimoPrecio);
-      const min = parseFloat(cotiz.minimo || cotiz.ultimoPrecio);
-      const prevClose = parseFloat(cotiz.cierreAnterior || cotiz.ultimoPrecio);
-      const tr = Math.max(max - min, Math.abs(max - prevClose), Math.abs(min - prevClose));
-      const atrPct = (tr / mejorDip.precioArs) * 100 || 1.5;
-      const dynamicTpPct = Math.min(Math.max(atrPct * 1.8, 2.0), 5.0);
-      const dynamicSlPct = Math.min(Math.max(atrPct * 0.9, 1.0), 2.5);
-
-      const cantidad = Math.floor(iolBot.capitalArs / mejorDip.precioArs);
-      if (cantidad >= 1) {
-        log(`🟢 OPORTUNIDAD DIP: ${mejorDip.emoji} ${mejorDip.ticker} con ${mejorDip.descuentoPct.toFixed(2)}% de descuento.`);
-        log(`🛒 Comprando ${cantidad} CEDEARs de ${mejorDip.ticker} a $${mejorDip.precioArs.toFixed(2)} ARS`);
-        const resultado = await sendIolOrder(token, mejorDip.ticker, cantidad, mejorDip.precioArs, 'comprar');
-        if (resultado.success) {
-          iolBot.estado = 'INVERTIDO';
-          iolBot.ticker = mejorDip.ticker;
-          iolBot.qty = cantidad;
-          iolBot.buyPriceArs = mejorDip.precioArs;
-          iolBot.buyTimestamp = Date.now();
-          iolBot.tpPct = dynamicTpPct;
-          iolBot.slPct = dynamicSlPct;
-          iolBot.atrPct = atrPct;
-          log(`✅ COMPRA DIP CONFIRMADA | Orden #${resultado.orderId} | ${cantidad}× ${mejorDip.ticker}`);
-          return;
-        }
-      }
-    }
-
-    log(`⏳ Sin oportunidad de Pairs Trading ni Dip (en 25 activos / 7 pares). Esperando próximo ciclo en 5 min.`);
+    log(`⏳ Sin oportunidades nuevas para Slot libre #${freeSlotIndex+1}. Esperando próximo ciclo en 5 min.`);
   };
 
   // Primer ciclo inmediato
