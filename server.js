@@ -199,12 +199,44 @@ async function getMepRate() {
 // ============================================================
 // IOL — HORARIO BYMA: Lunes a Viernes 11:00 a 17:00 hs (Buenos Aires = UTC-3)
 // Nota: Pusimos 10:30 porque el pre-market arranca ahí, pero IOL suele dar cotizaciones reales a las 11:00
+// ============================================================
 function isMarketOpen() {
   const now = new Date();
   const day = now.getUTCDay();
   if (day === 0 || day === 6) return false;
   const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
   return mins >= 810 && mins < 1200; // 13:30-20:00 UTC = 10:30-17:00 BA
+}
+
+// ============================================================
+// IOL — ESTRATEGIA GAP DE APERTURA EN SPY Y SPXL (10:30 a 11:30 ART)
+// QQQ 100% EXCLUIDO (PROTECCIÓN DE INVERSIÓN PERSONAL)
+// ============================================================
+const EXCLUDED_TICKERS = ['QQQ'];
+
+async function scanMorningGapModule(token) {
+  const now = new Date();
+  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  // 13:30 a 14:30 UTC = 10:30 a 11:30 ART
+  if (mins < 810 || mins > 870) return null;
+
+  const gapTickers = ['SPY', 'SPXL'];
+  for (const ticker of gapTickers) {
+    if (EXCLUDED_TICKERS.includes(ticker)) continue;
+    const cotiz = await getIolCotizacion(token, ticker);
+    if (cotiz && cotiz.ultimoPrecio && cotiz.cierreAnterior && cotiz.apertura) {
+      const px = parseFloat(cotiz.ultimoPrecio);
+      const closePrev = parseFloat(cotiz.cierreAnterior);
+      const openPx = parseFloat(cotiz.apertura);
+      const gapPct = ((openPx - closePrev) / closePrev) * 100;
+
+      if (gapPct >= 0.40) {
+        // Asumiendo log está disponible en el scope donde se use
+        return { ticker, precioArs: px, gapPct, cotiz };
+      }
+    }
+  }
+  return null;
 }
 
 // ============================================================
@@ -403,6 +435,19 @@ function startIolBotV2(username, password, capitalArs) {
     // ── PROCESAMIENTO DE HISTORIAL Y PAIRS TRADING (RATIO Z-SCORE) ──
     let mejorOportunidadPair = null;
     let maxZDeviation = 0;
+
+    // Verificar si hay señal de Gap de Apertura a la mañana en SPY/SPXL
+    const gapOpp = await scanMorningGapModule(token);
+    if (gapOpp && !iolBot.slots.some(s => s && s.ticker === gapOpp.ticker)) {
+      mejorOportunidadPair = {
+        ticker: gapOpp.ticker,
+        precioArs: gapOpp.precioArs,
+        valorUsd: gapOpp.precioArs / (iolBot.dolarMep || 1500),
+        pairName: `Gap Apertura +${gapOpp.gapPct.toFixed(2)}%`,
+        zScore: 2.50,
+        cotiz: gapOpp.cotiz
+      };
+    }
 
     for (const pair of PAIRS) {
       const valA = currentUsdValues[pair.a];
