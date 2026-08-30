@@ -655,4 +655,8 @@ server.listen(PORT, () => {
   console.log(`[SERVER ✅] Bot IOL CEDEARs v2 activo en puerto ${PORT}.`);
   console.log(`[SERVER 📡] Endpoint UptimeRobot: GET /ping`);
   console.log(`[SERVER 📋] Registrar en UptimeRobot: https://tu-app.onrender.com/ping`);
+  // Self-Ping cada 10 minutos para mantener el servidor despierto 24/7 en Render
+  setInterval(() => {
+    httpsGet('https://bot-iol-cedears-v2.onrender.com/ping').catch(() => {});
+  }, 10 * 60 * 1000);
 });
